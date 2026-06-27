@@ -289,6 +289,15 @@ void cdcd_reset(uint8_t rhport) {
     tu_fifo_set_overwritable(&p_cdc->tx_stream.ff, CFG_TUD_CDC_TX_OVERWRITABLE_IF_NOT_CONNECTED); // back to default
     tu_edpt_stream_close(&p_cdc->rx_stream);
     tu_edpt_stream_close(&p_cdc->tx_stream);
+
+    // Drop buffered data unless the app opted into persistence across bus reset.
+    // Stale RX after disconnect was a common source of "ghost" bytes / confused apps.
+  #if !CFG_TUD_CDC_RX_PERSISTENT
+    tu_edpt_stream_clear(&p_cdc->rx_stream);
+  #endif
+  #if !CFG_TUD_CDC_TX_PERSISTENT
+    tu_edpt_stream_clear(&p_cdc->tx_stream);
+  #endif
   }
 }
 
@@ -459,7 +468,6 @@ bool cdcd_control_xfer_cb(uint8_t rhport, uint8_t stage, const tusb_control_requ
 
 bool cdcd_xfer_cb(uint8_t rhport, uint8_t ep_addr, xfer_result_t result, uint32_t xferred_bytes) {
   (void)rhport;
-  (void)result;
 
   uint8_t itf = find_cdc_itf(ep_addr);
   TU_ASSERT(itf < CFG_TUD_CDC);
@@ -469,62 +477,72 @@ bool cdcd_xfer_cb(uint8_t rhport, uint8_t ep_addr, xfer_result_t result, uint32_
 
   // Received new data, move to fifo
   if (ep_addr == stream_rx->ep_addr) {
-    tu_edpt_stream_read_xfer_complete(stream_rx, xferred_bytes);
+    // Only commit payload on success — failed/aborted OUT must not invent RX bytes
+    // (duplicate/garbled data under disconnect or bus error).
+    if (result == XFER_RESULT_SUCCESS && xferred_bytes > 0) {
+      tu_edpt_stream_read_xfer_complete(stream_rx, xferred_bytes);
 
-    // Check for wanted char and invoke wanted callback
-    if (((signed char)p_cdc->wanted_char) != -1) {
-      tu_fifo_buffer_info_t buf_info;
-      tu_fifo_get_read_info(&stream_rx->ff, &buf_info);
+      // Check for wanted char and invoke wanted callback
+      if (((signed char)p_cdc->wanted_char) != -1) {
+        tu_fifo_buffer_info_t buf_info;
+        tu_fifo_get_read_info(&stream_rx->ff, &buf_info);
 
-      // find backward
-      uint8_t *ptr;
-      if (buf_info.wrapped.len > 0) {
-        ptr = buf_info.wrapped.ptr + buf_info.wrapped.len - 1; // last byte of wrap buffer
-      } else if (buf_info.linear.len > 0) {
-        ptr = buf_info.linear.ptr + buf_info.linear.len - 1;   // last byte of linear buffer
-      } else {
-        ptr = NULL;                                      // no data
-      }
+        // find backward
+        uint8_t *ptr;
+        if (buf_info.wrapped.len > 0) {
+          ptr = buf_info.wrapped.ptr + buf_info.wrapped.len - 1; // last byte of wrap buffer
+        } else if (buf_info.linear.len > 0) {
+          ptr = buf_info.linear.ptr + buf_info.linear.len - 1;   // last byte of linear buffer
+        } else {
+          ptr = NULL;                                      // no data
+        }
 
-      if (ptr != NULL) {
-        for (uint32_t i = 0; i < xferred_bytes; i++) {
-          if (p_cdc->wanted_char == (char)*ptr) {
-            tud_cdc_rx_wanted_cb(itf, p_cdc->wanted_char);
-            break; // only invoke once per transfer, even if multiple wanted chars are present
-          }
+        if (ptr != NULL) {
+          for (uint32_t i = 0; i < xferred_bytes; i++) {
+            if (p_cdc->wanted_char == (char)*ptr) {
+              tud_cdc_rx_wanted_cb(itf, p_cdc->wanted_char);
+              break; // only invoke once per transfer, even if multiple wanted chars are present
+            }
 
-          if (ptr == buf_info.wrapped.ptr) {
-            ptr = buf_info.linear.ptr + buf_info.linear.len - 1; // last byte of linear buffer
-          } else if (ptr == buf_info.linear.ptr) {
-            break;                                         // reached the beginning
-          } else {
-            ptr--;
+            if (ptr == buf_info.wrapped.ptr) {
+              ptr = buf_info.linear.ptr + buf_info.linear.len - 1; // last byte of linear buffer
+            } else if (ptr == buf_info.linear.ptr) {
+              break;                                         // reached the beginning
+            } else {
+              ptr--;
+            }
           }
         }
       }
+
+      // invoke receive callback if there is still data
+      if (!tu_edpt_stream_empty(stream_rx)) {
+        tud_cdc_rx_cb(itf);
+      }
     }
 
-    // invoke receive callback if there is still data
-    if (!tu_edpt_stream_empty(stream_rx)) {
-      tud_cdc_rx_cb(itf);
-    }
-
-    tu_edpt_stream_read_xfer(stream_rx); // prepare for more data
+    // Always try to re-arm OUT so RX does not stall after a failed transfer or ZLP
+    tu_edpt_stream_read_xfer(stream_rx);
   }
 
   // Data sent to host, we continue to fetch from tx fifo to send.
   // Note: This will cause incorrect baudrate set in line coding. Though maybe the baudrate is not really important!
   if (ep_addr == stream_tx->ep_addr) {
-    tud_cdc_tx_complete_cb(itf); // invoke callback to possibly refill tx fifo
+    if (result == XFER_RESULT_SUCCESS) {
+      tud_cdc_tx_complete_cb(itf); // invoke callback to possibly refill tx fifo
 
-    if (0 == tu_edpt_stream_write_xfer(stream_tx)) {
-      // If there is no data left, a ZLP should be sent if needed
-      tu_edpt_stream_write_zlp_if_needed(stream_tx, xferred_bytes);
+      if (0 == tu_edpt_stream_write_xfer(stream_tx)) {
+        // If there is no data left, a ZLP should be sent if needed
+        tu_edpt_stream_write_zlp_if_needed(stream_tx, xferred_bytes);
+      }
+    } else {
+      // EP is free again (usbd cleared busy); try to resume TX so a failed IN does not hang the pipe
+      (void) tu_edpt_stream_write_xfer(stream_tx);
     }
   }
 
   // Sent notification to host
-  if (ep_addr == p_cdc->ep_notify) {
+  if (ep_addr == p_cdc->ep_notify && result == XFER_RESULT_SUCCESS) {
     tud_cdc_notify_complete_cb(itf);
   }
 

@@ -334,39 +334,46 @@ uint16_t vendord_open(uint8_t rhport, const tusb_desc_interface_t *desc_itf, uin
 
 bool vendord_xfer_cb(uint8_t rhport, uint8_t ep_addr, xfer_result_t result, uint32_t xferred_bytes) {
   (void)rhport;
-  (void)result;
   const uint8_t idx = find_vendor_itf(ep_addr);
   TU_VERIFY(idx < CFG_TUD_VENDOR);
   vendord_interface_t *p_vendor = &_vendord_itf[idx];
 
 #if CFG_TUD_VENDOR_TXRX_BUFFERED
   if (ep_addr == p_vendor->rx_stream.ep_addr) {
-    // Put received data to FIFO
-    tu_edpt_stream_read_xfer_complete(&p_vendor->rx_stream, xferred_bytes);
-    tud_vendor_rx_cb(idx, NULL, 0);
+    if (result == XFER_RESULT_SUCCESS && xferred_bytes > 0) {
+      // Put received data to FIFO only on success
+      tu_edpt_stream_read_xfer_complete(&p_vendor->rx_stream, xferred_bytes);
+      tud_vendor_rx_cb(idx, NULL, 0);
+    }
     #if CFG_TUD_VENDOR_RX_MANUAL_XFER == 0
-    tu_edpt_stream_read_xfer(&p_vendor->rx_stream); // prepare next data
+    tu_edpt_stream_read_xfer(&p_vendor->rx_stream); // prepare next data (also after failure)
     #endif
   } else if (ep_addr == p_vendor->tx_stream.ep_addr) {
-    // Send complete
-    tud_vendor_tx_cb(idx, (uint16_t)xferred_bytes);
+    if (result == XFER_RESULT_SUCCESS) {
+      tud_vendor_tx_cb(idx, (uint16_t)xferred_bytes);
 
-    // try to send more if possible
-    if (0 == tu_edpt_stream_write_xfer(&p_vendor->tx_stream)) {
-      // If there is no data left, a ZLP should be sent if xferred_bytes is multiple of EP Packet size and not zero
-      tu_edpt_stream_write_zlp_if_needed(&p_vendor->tx_stream, xferred_bytes);
+      // try to send more if possible
+      if (0 == tu_edpt_stream_write_xfer(&p_vendor->tx_stream)) {
+        // If there is no data left, a ZLP should be sent if xferred_bytes is multiple of EP Packet size and not zero
+        tu_edpt_stream_write_zlp_if_needed(&p_vendor->tx_stream, xferred_bytes);
+      }
+    } else {
+      (void) tu_edpt_stream_write_xfer(&p_vendor->tx_stream);
     }
   }
   #else
   if (ep_addr == p_vendor->ep_out) {
-    // Non-FIFO mode: invoke callback with buffer
-    tud_vendor_rx_cb(idx, _vendord_epbuf[idx].epout, xferred_bytes);
+    if (result == XFER_RESULT_SUCCESS) {
+      // Non-FIFO mode: invoke callback with buffer
+      tud_vendor_rx_cb(idx, _vendord_epbuf[idx].epout, xferred_bytes);
+    }
     #if CFG_TUD_VENDOR_RX_MANUAL_XFER == 0
     usbd_edpt_xfer(rhport, p_vendor->ep_out, _vendord_epbuf[idx].epout, p_vendor->rx_xfer_len, false);
     #endif
   } else if (ep_addr == p_vendor->ep_in) {
-    // Send complete
-    tud_vendor_tx_cb(idx, (uint16_t)xferred_bytes);
+    if (result == XFER_RESULT_SUCCESS) {
+      tud_vendor_tx_cb(idx, (uint16_t)xferred_bytes);
+    }
   }
   #endif
 

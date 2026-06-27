@@ -470,17 +470,29 @@ bool mscd_control_xfer_cb(uint8_t rhport, uint8_t stage, tusb_control_request_t 
 }
 
 bool mscd_xfer_cb(uint8_t rhport, uint8_t ep_addr, xfer_result_t event, uint32_t xferred_bytes) {
-  (void) event;
-
   mscd_interface_t* p_msc = &_mscd_itf;
   msc_cbw_t * p_cbw = &p_msc->cbw;
   msc_csw_t * p_csw = &p_msc->csw;
+
+  // Failed/aborted data-phase transfers must not advance BOT as if bytes were valid
+  // (intermittent corruption / stuck stages under disconnect or DCD errors).
+  if (event != XFER_RESULT_SUCCESS && p_msc->stage == MSC_STAGE_DATA) {
+    TU_LOG_DRV("  SCSI Data transfer failed result=%u\r\n", (unsigned) event);
+    fail_scsi_op(p_msc, MSC_CSW_STATUS_FAILED);
+    // fall through so STATUS is sent if fail_scsi_op queued it
+  }
 
   switch (p_msc->stage) {
     case MSC_STAGE_CMD: {
       //------------- new CBW received -------------//
       // Complete IN while waiting for CMD is usually Status of previous SCSI op, ignore it
       if (ep_addr != p_msc->ep_out) {
+        return true;
+      }
+
+      if (event != XFER_RESULT_SUCCESS) {
+        // Re-arm CBW reception after a failed OUT so we are not stuck in CMD with no transfer
+        TU_ASSERT(prepare_cbw(p_msc));
         return true;
       }
 

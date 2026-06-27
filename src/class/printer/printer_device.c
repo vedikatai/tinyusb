@@ -296,7 +296,6 @@ bool printerd_control_xfer_cb(uint8_t rhport, uint8_t stage, const tusb_control_
 
 bool printerd_xfer_cb(uint8_t rhport, uint8_t ep_addr, xfer_result_t result, uint32_t xferred_bytes) {
   (void)rhport;
-  (void)result;
 
   uint8_t const itf = _find_itf(ep_addr);
   TU_ASSERT(itf < CFG_TUD_PRINTER);
@@ -304,21 +303,27 @@ bool printerd_xfer_cb(uint8_t rhport, uint8_t ep_addr, xfer_result_t result, uin
 
   // Received new data
   if (ep_addr == p->rx_stream.ep_addr) {
-    tu_edpt_stream_read_xfer_complete(&p->rx_stream, xferred_bytes);
+    if (result == XFER_RESULT_SUCCESS && xferred_bytes > 0) {
+      tu_edpt_stream_read_xfer_complete(&p->rx_stream, xferred_bytes);
 
-    if (!tu_edpt_stream_empty(&p->rx_stream)) {
-      tud_printer_rx_cb(itf);
+      if (!tu_edpt_stream_empty(&p->rx_stream)) {
+        tud_printer_rx_cb(itf);
+      }
     }
 
-    tu_edpt_stream_read_xfer(&p->rx_stream);
+    tu_edpt_stream_read_xfer(&p->rx_stream); // re-arm OUT even after failure
   }
 
   // Data sent to host
   if (ep_addr == p->tx_stream.ep_addr) {
-    tud_printer_tx_complete_cb(itf);
+    if (result == XFER_RESULT_SUCCESS) {
+      tud_printer_tx_complete_cb(itf);
 
-    if (0 == tu_edpt_stream_write_xfer(&p->tx_stream)) {
-      tu_edpt_stream_write_zlp_if_needed(&p->tx_stream, xferred_bytes);
+      if (0 == tu_edpt_stream_write_xfer(&p->tx_stream)) {
+        tu_edpt_stream_write_zlp_if_needed(&p->tx_stream, xferred_bytes);
+      }
+    } else {
+      (void) tu_edpt_stream_write_xfer(&p->tx_stream);
     }
   }
 

@@ -79,7 +79,8 @@ typedef struct {
 //--------------------------------------------------------------------+
 static netd_interface_t _netd_itf;
 CFG_TUD_MEM_SECTION static netd_epbuf_t _netd_epbuf;
-static bool can_xmit;
+// Written from USB class xfer path; read from application (tud_network_can_xmit / xmit)
+static volatile bool can_xmit;
 static bool ecm_link_is_up = true;  // Store link state for ECM mode
 
 //--------------------------------------------------------------------+
@@ -359,20 +360,29 @@ static void handle_incoming_packet(uint32_t len) {
 
 bool netd_xfer_cb(uint8_t rhport, uint8_t ep_addr, xfer_result_t result, uint32_t xferred_bytes) {
   (void)rhport;
-  (void)result;
 
   /* new packet received */
   if (ep_addr == _netd_itf.ep_out) {
-    handle_incoming_packet(xferred_bytes);
+    if (result == XFER_RESULT_SUCCESS) {
+      handle_incoming_packet(xferred_bytes);
+    } else {
+      /* Failed OUT: renew so RX does not stall after a bus error */
+      tud_network_recv_renew();
+    }
   }
 
   /* data transmission finished */
   if (ep_addr == _netd_itf.ep_in) {
-    /* TinyUSB requires the class driver to implement ZLP (since ZLP usage is class-specific) */
-    if (xferred_bytes > 0 && 0 == (xferred_bytes & (_netd_itf.ep_size-1))) {
-      do_in_xfer(NULL, 0); /* a ZLP is needed */
+    if (result == XFER_RESULT_SUCCESS) {
+      /* TinyUSB requires the class driver to implement ZLP (since ZLP usage is class-specific) */
+      if (xferred_bytes > 0 && 0 == (xferred_bytes & (_netd_itf.ep_size - 1))) {
+        do_in_xfer(NULL, 0); /* a ZLP is needed */
+      } else {
+        /* we're finally finished */
+        can_xmit = true;
+      }
     } else {
-      /* we're finally finished */
+      /* Failed IN must not leave can_xmit false forever (app would stop transmitting) */
       can_xmit = true;
     }
   }
