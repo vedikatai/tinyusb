@@ -432,3 +432,36 @@ File: `src/osal/osal_freertos.h`.
 9. v0.18.0 cherry-pick validation.  
 10. Per-phase draft PRs (single PR with roadmap unless fixes land).
 
+
+
+## Appendix A — Final build matrix snapshot (this host)
+
+Source: `/tmp/tinyusb-build-matrix.json` — **120 cells, 75 success, 45 fail/missing**.
+
+HEAD make sizes (Debug/default make, not MinSizeRel cmake — different from cmake ELF):
+
+| Example | Board | ELF (make HEAD) |
+|---|---|---:|
+| device/cdc_msc | stm32f411blackpill | 270076 |
+| device/hid_composite | stm32f407disco | 252696 |
+| device/msc_dual_lun | stm32f407disco | 250300 |
+| device/cdc_msc | stm32f407disco | 277152 |
+
+Tag 0.16.0–0.18.0 **make fail** in worktrees (likely missing family SDK layout / Python / board.mk divergence when only `hw/mcu`+`lib` symlinked). **Bisect not performed** — document as blocker; re-run on Linux CI image matching upstream.
+
+CMake MinSizeRel highlights (success cells):
+
+| Example | Board | ELF | BIN | Warn |
+|---|---|---:|---:|---:|
+| device/cdc_msc | stm32f407disco | 360620 | 27200 | 0 |
+| device/cdc_msc | stm32f411blackpill | 354636 | 26768 | 0 |
+| device/hid_composite | stm32f407disco | 331840 | 15820 | 0 |
+| device/msc_dual_lun | stm32f407disco | 333800 | 32916 | 0 |
+| device/net_lwip_webserver | stm32f407disco | 652088 | 52036 | 4 |
+| device/net_lwip_webserver | stm32f439nucleo | 653568 | 52112 | 4 |
+| host/cdc_msc_hid | stm32f407disco | 505608 | 34672 | 4 |
+| host/hid_controller | stm32f407disco | 352656 | 22944 | 4 |
+
+Failure clusters: entire `stm32f103_bluepill` and `feather_m0_express` (missing MCU deps); all `host/*` on `nrf52840dk`; `device/cdc_dual_ports` @ `stm32f407disco` only (works on f411/f439 — investigate HS dual CDC).
+
+Public PR: draft on vedikatai/tinyusb branch `tinyusb-1.0-roadmap` → `master`.
