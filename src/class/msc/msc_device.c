@@ -946,7 +946,9 @@ static void proc_write_io_data(mscd_interface_t* p_msc, uint32_t xferred_bytes, 
       // Application consume less than what we got including TUD_MSC_RET_BUSY (0)
       const uint32_t left_over = xferred_bytes - (uint32_t)nbytes;
       if (nbytes > 0) {
-        memmove(_mscd_epbuf.buf, _mscd_epbuf.buf + nbytes, left_over);
+        // Shift unconsumed tail to the front of the EP buffer (dest capacity is full EP buf)
+        (void) tu_memmove_s(_mscd_epbuf.buf, sizeof(_mscd_epbuf.buf),
+                            _mscd_epbuf.buf + nbytes, left_over);
       }
 
       // fake a transfer complete with adjusted parameters --> callback will be invoked with adjusted parameters

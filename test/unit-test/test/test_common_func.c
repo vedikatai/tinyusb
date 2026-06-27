@@ -44,6 +44,42 @@ void tearDown(void)
 {
 }
 
+void test_tu_log2(void)
+{
+  TEST_ASSERT_EQUAL_UINT8(0, tu_log2(0));
+  TEST_ASSERT_EQUAL_UINT8(0, tu_log2(1));
+  TEST_ASSERT_EQUAL_UINT8(1, tu_log2(2));
+  TEST_ASSERT_EQUAL_UINT8(1, tu_log2(3));
+  TEST_ASSERT_EQUAL_UINT8(2, tu_log2(4));
+  TEST_ASSERT_EQUAL_UINT8(3, tu_log2(8));
+  TEST_ASSERT_EQUAL_UINT8(4, tu_log2(16));
+  TEST_ASSERT_EQUAL_UINT8(7, tu_log2(128));
+  TEST_ASSERT_EQUAL_UINT8(8, tu_log2(256));
+  TEST_ASSERT_EQUAL_UINT8(10, tu_log2(1024));
+  TEST_ASSERT_EQUAL_UINT8(15, tu_log2(0x8000u));
+  TEST_ASSERT_EQUAL_UINT8(31, tu_log2(0x80000000u));
+  TEST_ASSERT_EQUAL_UINT8(31, tu_log2(0xFFFFFFFFu));
+}
+
+void test_tu_memmove_s(void)
+{
+  uint8_t buf[8] = {0, 1, 2, 3, 4, 5, 6, 7};
+
+  // overlapping shift toward front (same pattern as MSC partial-consume)
+  TEST_ASSERT_EQUAL(0, tu_memmove_s(buf, sizeof(buf), buf + 2, 4));
+  TEST_ASSERT_EQUAL_UINT8(2, buf[0]);
+  TEST_ASSERT_EQUAL_UINT8(3, buf[1]);
+  TEST_ASSERT_EQUAL_UINT8(4, buf[2]);
+  TEST_ASSERT_EQUAL_UINT8(5, buf[3]);
+
+  // reject overflow
+  TEST_ASSERT_EQUAL(-1, tu_memmove_s(buf, 2, buf + 2, 4));
+
+  // null / zero-count
+  TEST_ASSERT_EQUAL(-1, tu_memmove_s(NULL, 4, buf, 2));
+  TEST_ASSERT_EQUAL(0, tu_memmove_s(buf, sizeof(buf), buf, 0));
+}
+
 void test_TU_ARGS_NUM(void)
 {
   TEST_ASSERT_EQUAL( 0, TU_ARGS_NUM());

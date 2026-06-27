@@ -51,7 +51,8 @@ typedef struct {
 
   /*------------- From this point, data is not cleared by bus reset -------------*/
   TU_ATTR_ALIGNED(4) cdc_line_coding_t line_coding;
-  char wanted_char;
+  // int16_t so -1 is a portable "disabled" sentinel (plain char is unsigned on many embedded ABIs)
+  int16_t wanted_char;
 
   tu_edpt_stream_t tx_stream;
   tu_edpt_stream_t rx_stream;
@@ -180,7 +181,7 @@ bool tud_cdc_n_notify_msg(uint8_t itf, cdc_notify_msg_t *msg) {
 
 void tud_cdc_n_set_wanted_char(uint8_t itf, char wanted) {
   TU_VERIFY(itf < CFG_TUD_CDC, );
-  _cdcd_itf[itf].wanted_char = wanted;
+  _cdcd_itf[itf].wanted_char = (int16_t) (uint8_t) wanted;
 }
 
 //--------------------------------------------------------------------+
@@ -244,7 +245,7 @@ void cdcd_init(void) {
   tu_memclr(_cdcd_itf, sizeof(_cdcd_itf));
   for (uint8_t i = 0; i < CFG_TUD_CDC; i++) {
     cdcd_interface_t *p_cdc   = &_cdcd_itf[i];
-    p_cdc->wanted_char = (char) -1;
+    p_cdc->wanted_char = -1; // disabled
 
     // default line coding is : stop bit = 1, parity = none, data bits = 8
     p_cdc->line_coding.bit_rate = 115200;
@@ -472,7 +473,7 @@ bool cdcd_xfer_cb(uint8_t rhport, uint8_t ep_addr, xfer_result_t result, uint32_
     tu_edpt_stream_read_xfer_complete(stream_rx, xferred_bytes);
 
     // Check for wanted char and invoke wanted callback
-    if (((signed char)p_cdc->wanted_char) != -1) {
+    if (p_cdc->wanted_char >= 0) {
       tu_fifo_buffer_info_t buf_info;
       tu_fifo_get_read_info(&stream_rx->ff, &buf_info);
 
@@ -487,9 +488,10 @@ bool cdcd_xfer_cb(uint8_t rhport, uint8_t ep_addr, xfer_result_t result, uint32_
       }
 
       if (ptr != NULL) {
+        const char wanted = (char) p_cdc->wanted_char;
         for (uint32_t i = 0; i < xferred_bytes; i++) {
-          if (p_cdc->wanted_char == (char)*ptr) {
-            tud_cdc_rx_wanted_cb(itf, p_cdc->wanted_char);
+          if (wanted == (char)*ptr) {
+            tud_cdc_rx_wanted_cb(itf, wanted);
             break; // only invoke once per transfer, even if multiple wanted chars are present
           }
 

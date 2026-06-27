@@ -155,6 +155,28 @@ TU_ATTR_ALWAYS_INLINE static inline int tu_memcpy_s(void *dest, size_t destsz, c
   return 0;
 }
 
+// This is a backport of memmove_s from c11
+TU_ATTR_ALWAYS_INLINE static inline int tu_memmove_s(void *dest, size_t destsz, const void *src, size_t count) {
+  if (dest == NULL) {
+    return -1;
+  }
+
+  if (count == 0u) {
+    return 0;
+  }
+
+  if (src == NULL) {
+    return -1;
+  }
+
+  if (count > destsz) {
+    return -1;
+  }
+
+  (void) memmove(dest, src, count);
+  return 0;
+}
+
 TU_ATTR_ALWAYS_INLINE static inline bool tu_mem_is_zero(const void *buffer, size_t size) {
   const uint8_t* buf8 = (const uint8_t*) buffer;
   for (size_t i = 0; i < size; i++) {
@@ -232,20 +254,25 @@ TU_ATTR_ALWAYS_INLINE static inline uint32_t tu_div_round_nearest(uint32_t v, ui
 
 TU_ATTR_ALWAYS_INLINE static inline uint32_t tu_round_up(uint32_t v, uint32_t f) { return tu_div_ceil(v, f) * f; }
 
-// log2 of a value is its MSB's position
-// TODO use clz TODO remove
+// Floor log2 of a value (MSB position). Returns 0 for value == 0 (undefined mathematically).
+// Prefer compiler CLZ when available; fall back to a portable loop for exotic toolchains.
 TU_ATTR_ALWAYS_INLINE static inline uint8_t tu_log2(uint32_t value) {
+  if (value == 0u) {
+    return 0;
+  }
+#if defined(__GNUC__) || defined(__clang__)
+  // 31 - leading zeros == index of highest set bit for a 32-bit value
+  return (uint8_t) (31u - (uint32_t) __builtin_clz(value));
+#elif defined(__ICCARM__)
+  return (uint8_t) (31u - (uint32_t) __CLZ(value));
+#else
   uint8_t result = 0;
   while ((value >>= 1u) != 0u) {
     result++;
   }
   return result;
+#endif
 }
-
-//static inline uint8_t tu_log2(uint32_t value)
-//{
-//   return sizeof(uint32_t) * CHAR_BIT - __builtin_clz(x) - 1;
-//}
 
 TU_ATTR_ALWAYS_INLINE static inline bool tu_is_power_of_two(uint32_t value) {
    return (value != 0) && ((value & (value - 1)) == 0);

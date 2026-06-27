@@ -253,7 +253,7 @@ bool tud_usbtmc_transmit_dev_msg_data(
   const size_t dataLen = ((headerLen + hdr->TransferSize) <= txBufLen) ? len : (txBufLen - headerLen);
   const size_t packetLen = headerLen + dataLen;
 
-  memcpy((uint8_t *) (usbtmc_epbuf.epin) + headerLen, data, dataLen);
+  TU_VERIFY(tu_memcpy_s((uint8_t *) (usbtmc_epbuf.epin) + headerLen, txBufLen - headerLen, data, dataLen) == 0);
   usbtmc_state.transfer_size_remaining = len - dataLen;
   usbtmc_state.transfer_size_sent = dataLen;
   usbtmc_state.devInBuffer = (uint8_t const *) data + (dataLen);
@@ -270,7 +270,8 @@ bool tud_usbtmc_transmit_notification_data(const void *data, size_t len) {
   TU_ASSERT(len > 0);
   TU_ASSERT(usbtmc_state.ep_int_in != 0);
 #endif
-  TU_VERIFY(usbd_edpt_busy(usbtmc_state.rhport, usbtmc_state.ep_int_in));
+  // Endpoint must be free (not busy) before queuing a new interrupt IN transfer
+  TU_VERIFY(!usbd_edpt_busy(usbtmc_state.rhport, usbtmc_state.ep_int_in));
 
   TU_VERIFY(tu_memcpy_s(usbtmc_epbuf.epnotif, CFG_TUD_USBTMC_INT_EP_SIZE, data, len) == 0);
   TU_VERIFY(usbd_edpt_xfer(usbtmc_state.rhport, usbtmc_state.ep_int_in, usbtmc_epbuf.epnotif, (uint16_t) len, false));
@@ -566,7 +567,8 @@ bool usbtmcd_xfer_cb(uint8_t rhport, uint8_t ep_addr, xfer_result_t result, uint
       case STATE_TX_INITIATED:
         if (usbtmc_state.transfer_size_remaining >= USBTMCD_BUFFER_SIZE) {
           // Copy buffer to ensure alignment correctness
-          memcpy(usbtmc_epbuf.epin, usbtmc_state.devInBuffer, USBTMCD_BUFFER_SIZE);
+          TU_VERIFY(tu_memcpy_s(usbtmc_epbuf.epin, USBTMCD_BUFFER_SIZE,
+                                usbtmc_state.devInBuffer, USBTMCD_BUFFER_SIZE) == 0);
           TU_VERIFY(usbd_edpt_xfer(rhport, usbtmc_state.ep_bulk_in, usbtmc_epbuf.epin, USBTMCD_BUFFER_SIZE, false));
           usbtmc_state.devInBuffer += USBTMCD_BUFFER_SIZE;
           usbtmc_state.transfer_size_remaining -= USBTMCD_BUFFER_SIZE;
@@ -574,7 +576,8 @@ bool usbtmcd_xfer_cb(uint8_t rhport, uint8_t ep_addr, xfer_result_t result, uint
         } else// last packet
         {
           size_t packetLen = usbtmc_state.transfer_size_remaining;
-          memcpy(usbtmc_epbuf.epin, usbtmc_state.devInBuffer, usbtmc_state.transfer_size_remaining);
+          TU_VERIFY(tu_memcpy_s(usbtmc_epbuf.epin, USBTMCD_BUFFER_SIZE,
+                                usbtmc_state.devInBuffer, packetLen) == 0);
           usbtmc_state.transfer_size_sent += packetLen;
           usbtmc_state.transfer_size_remaining = 0;
           usbtmc_state.devInBuffer = NULL;

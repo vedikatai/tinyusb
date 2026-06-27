@@ -79,7 +79,8 @@ typedef struct {
 //--------------------------------------------------------------------+
 static netd_interface_t _netd_itf;
 CFG_TUD_MEM_SECTION static netd_epbuf_t _netd_epbuf;
-static bool can_xmit;
+// Written from USB task (xfer complete) and read from application context
+static volatile bool can_xmit;
 static bool ecm_link_is_up = true;  // Store link state for ECM mode
 
 //--------------------------------------------------------------------+
@@ -107,7 +108,7 @@ void netd_report(uint8_t *buf, uint16_t len) {
     return;
   }
 
-  memcpy(_netd_epbuf.notify, buf, len);
+  TU_ASSERT(tu_memcpy_s(_netd_epbuf.notify, sizeof(_netd_epbuf.notify), buf, len) == 0,);
   usbd_edpt_xfer(rhport, _netd_itf.ep_notif, _netd_epbuf.notify, len, false);
 }
 

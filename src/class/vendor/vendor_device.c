@@ -157,7 +157,7 @@ uint32_t tud_vendor_n_write(uint8_t idx, const void *buffer, uint32_t bufsize) {
   // non-fifo mode: direct transfer
   TU_VERIFY(usbd_edpt_claim(p_itf->rhport, p_itf->ep_in), 0);
   const uint32_t xact_len = tu_min32(bufsize, CFG_TUD_VENDOR_TX_EPSIZE);
-  memcpy(_vendord_epbuf[idx].epin, buffer, xact_len);
+  TU_ASSERT(tu_memcpy_s(_vendord_epbuf[idx].epin, CFG_TUD_VENDOR_TX_EPSIZE, buffer, xact_len) == 0, 0);
   TU_ASSERT(usbd_edpt_xfer(p_itf->rhport, p_itf->ep_in, _vendord_epbuf[idx].epin, (uint16_t)xact_len, false), 0);
   return xact_len;
   #endif
